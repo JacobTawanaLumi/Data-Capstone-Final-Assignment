@@ -1,0 +1,196 @@
+---
+title: "Ridging and Roping"
+author: "Jacob Mokgadi"
+date: "20/02/2022"
+output: slidy_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## 1. Background
+
+Ridging and Roping is a texture based defect that appears on the surface of a Ferritic type stainless Steel. During deep drawing and forming operations of stainless steel Ridging and Roping becomes evident on the surface of the steel and this makes the final product aesthetically displeasing to consumers. The purpose of this investigation was to determine the root cause of Ridging and Roping, while Isolating chemistry effects on grain orientation.
+
+## 2. Definition and Quantifying the problem
+
+* The defect has a 6.58% direct impact on yield loss
+* 25% on Ferritic group non-conformance-to-rework
+* additional three day contribution to the overall overdue (late material)
+* Costing approximately R423 053 per month (R5,076,645 per annum)
+
+## 3. Procedure
+
+
+* The investigation will commence by keeping steel chemistry, and stabilizers at optimum levels
+* Regressing other variables in order to find variables with the strongest correlation
+* Establish leading indicators to detect possible formation
+* Defect prevention in time
+
+*Regressors*
+
+* 3 main regression/classification models were used 
+* Decision Trees (Classification)
+* Random Forests (Classifier on various subsets)
+* Gradient Boosted modeling (regressor, combination of classifiers)
+
+## 4. Load the necessary packages
+
+```{r}
+library(rpart)
+library(caret)
+library(rpart.plot)
+library(lattice)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(dplyr)
+library(tidyverse)
+library(doParallel)
+library(ggplot2)
+library(iterators)
+library(xlsx)
+library(readxl)
+library(readr)
+library(stringi)
+library(stringr)
+library(party)
+library(partykit)
+library(xgboost)
+library(pdp)
+library(gbm)
+```
+
+## 5. Load and view the data
+```{r}
+Mills_data_441 <- read_excel("G:/Shared drives/Business Improvement/Projects/441 R&R project/Data/Millsred441QC.xlsx")
+
+Mills_data_441
+```
+## 5.1 Cleaning the data
+
+Take out unnecessary columns
+```{r}
+Mills_data_441%>%
+  select(-c(Product_No, SUM_Wet, SWF,WF_Sum,AP1_Temp_group))%>%
+  purrr::discard(~sum(is.na(.x))/length(.x)* 100 >=50)%>%
+  drop_na()->
+  Mills_data_441
+Mills_data_441
+
+Mills_data_441<-group_by(Mills_data_441,Roping)%>%sample_n(194)
+table(Mills_data_441$Roping)
+Mills_data_441
+
+```
+
+## 5.2 Data partitioning
+
+The next step is to partition the data set into training and testing portions, this helps with validating predictors. A good partition is based on 80/20 (being 80% of the data set reserved for training and 20% for testing)
+
+```{r}
+inTraining<-createDataPartition(y=Mills_data_441$Roping,p=0.8,list=FALSE)
+myTraining<-Mills_data_441[inTraining,]
+myTesting<-Mills_data_441[-inTraining,]
+
+dim(myTraining);dim(myTesting)
+
+```
+
+## 6.1 Decision trees for prediction
+
+```{r}
+modFitDC <- rpart(Roping~., data=myTraining, method="class")
+fancyRpartPlot(modFitDC,cex=0.6)
+rpart.plot(modFitDC,cex=0.6)
+```
+
+## Confusion matrix to test the results
+
+```{r}
+predictions_DC <- predict(modFitDC, myTesting, type = "class")
+myTesting$Roping<-as.factor(myTesting$Roping)
+confusionMatrix(predictions_DC, myTesting$Roping)
+```
+## 6.1 Random forests
+
+```{r}
+modFitRM <- randomForest(as.factor(Roping) ~. ,data=myTraining,method="rf")
+```
+
+Predicting sample error
+
+```{r}
+predictionsRM <- predict(modFitRM, myTesting, type = "class")
+```
+Testing the results with a confusion matrix
+
+```{r}
+conf_matrx_2<-confusionMatrix(predictionsRM, myTesting$Roping)
+conf_matrx_2
+```
+Plotting the results
+
+```{r}
+plot(conf_matrx_2$table, col = conf_matrx_2$byClass, 
+     main = paste("Random Forest - Accuracy Level =",
+                  round(conf_matrx_2$overall['Accuracy'], 4)))
+
+```
+## Random Forest ICE plot
+```{r}
+varImpPlot(modFitRM)
+```
+
+## 6.3 Gradient boosting model
+
+```{r}
+GBM_modfit <- train(Roping ~ ., data = myTraining, method = "gbm", verbose = FALSE)
+GBM_modfit$finalModel
+```
+
+Prediction
+```{r}
+GBM_prediction <- predict(GBM_modfit, myTesting)
+
+GBM_pred_conf <- confusionMatrix(GBM_prediction, myTesting$Roping)
+GBM_pred_conf
+```
+
+Plot
+
+```{r}
+plot(GBM_pred_conf$table, col = GBM_pred_conf$byClass, 
+     main = paste("Gradient Boosting - Accuracy Level =",
+                  round(GBM_pred_conf$overall['Accuracy'], 4)))
+```             
+```{r}
+summary(GBM_modfit,cBars=10,method=relative.influence,las=1.5)
+```
+
+## 7. Accuracy
+
+* The analysis above shows that caster cooling profiles, AP1 annealing temperature and overall reduction at the cold mills have the strongest correlations to Ridging and Roping. 
+* The balanced accuracy of the models are 60 and 70%
+* this means that the model can explain 60 to 70% of the variation.
+
+## 8. Risks involved
+
+It has been noted that Ridging and Roping detection is done by visual examination by both Inspectors and Technicians at the laboratory. This can pose a threat of giving inconsistent regressor readings and therefore compromises the accuracy of the model. To mitigate this a trial of 2 QCool attempts was performed and this involved Linear Intercept method. 
+
+## 9. Implementation of Solutions
+
+* Q cool was Set to AT1 setting
+* LIM method used as normal practice
+* Reduction set between 65% and 70%
+* Number of Roll changes to be reduced to 2 (5 pass)
+* Roll changes: 80 grit 1st pass and 180 grit 3rd pass
+
+## 10. Control
+
+* SOP and SPC for operators with AT1 settings
+* Training on Sops
+* Review pass schedules and standardize
+* Roll changes procedure reviewed
+
+
